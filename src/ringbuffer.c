@@ -3,20 +3,20 @@
 
    SPDX-License-Identifier: GPL-3.0-or-later
 
-   This file is part of BrickPico.
+   This file is part of pico-telnetd Library.
 
-   BrickPico is free software: you can redistribute it and/or modify
+   pico-telnetd Library is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation, either version 3 of the License, or
    (at your option) any later version.
 
-   BrickPico is distributed in the hope that it will be useful,
+   pico-telnetd Library is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with BrickPico. If not, see <https://www.gnu.org/licenses/>.
+   along with pico-telnetd Library. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include <stdio.h>
@@ -32,7 +32,7 @@
 
 
 
-int simple_ringbuffer_init(simple_ringbuffer_t *rb, uint8_t *buf, size_t size)
+int telnet_ringbuffer_init(telnet_ringbuffer_t *rb, uint8_t *buf, size_t size)
 {
 	if (!rb)
 		return -1;
@@ -55,7 +55,7 @@ int simple_ringbuffer_init(simple_ringbuffer_t *rb, uint8_t *buf, size_t size)
 }
 
 
-int simple_ringbuffer_free(simple_ringbuffer_t *rb)
+int telnet_ringbuffer_free(telnet_ringbuffer_t *rb)
 {
 	if (!rb)
 		return -1;
@@ -73,7 +73,7 @@ int simple_ringbuffer_free(simple_ringbuffer_t *rb)
 }
 
 
-int simple_ringbuffer_flush(simple_ringbuffer_t *rb)
+int telnet_ringbuffer_flush(telnet_ringbuffer_t *rb)
 {
 	if (!rb)
 		return -1;
@@ -85,13 +85,13 @@ int simple_ringbuffer_flush(simple_ringbuffer_t *rb)
 	return 0;
 }
 
-inline size_t simple_ringbuffer_size(simple_ringbuffer_t *rb)
+inline size_t telnet_ringbuffer_size(telnet_ringbuffer_t *rb)
 {
 	return (rb ? rb->size - rb->free : 0);
 }
 
 
-static inline size_t simple_ringbuffer_offset(simple_ringbuffer_t *rb, size_t offset, size_t delta, int direction)
+static inline size_t telnet_ringbuffer_offset(telnet_ringbuffer_t *rb, size_t offset, size_t delta, int direction)
 {
 	size_t o = offset % rb->size;
 	size_t d = delta % rb->size;
@@ -114,26 +114,26 @@ static inline size_t simple_ringbuffer_offset(simple_ringbuffer_t *rb, size_t of
 	return o;
 }
 
-inline int simple_ringbuffer_add_char(simple_ringbuffer_t *rb, uint8_t ch, bool overwrite)
+inline int telnet_ringbuffer_add_char(telnet_ringbuffer_t *rb, uint8_t ch, bool overwrite)
 {
 	if (!rb)
 		return -1;
 
 	if (overwrite && rb->free < 1) {
-		rb->head = simple_ringbuffer_offset(rb, rb->head, 1, 1);
+		rb->head = telnet_ringbuffer_offset(rb, rb->head, 1, 1);
 		rb->free += 1;
 	}
 	if (rb->free < 1)
 		return -2;
 
 	rb->buf[rb->tail] = ch;
-	rb->tail = simple_ringbuffer_offset(rb, rb->tail, 1, 1);
+	rb->tail = telnet_ringbuffer_offset(rb, rb->tail, 1, 1);
 	rb->free--;
 
 	return 0;
 }
 
-int simple_ringbuffer_add(simple_ringbuffer_t *rb, uint8_t *data, size_t len, bool overwrite)
+int telnet_ringbuffer_add(telnet_ringbuffer_t *rb, uint8_t *data, size_t len, bool overwrite)
 {
 	if (!rb || !data)
 		return -1;
@@ -146,13 +146,13 @@ int simple_ringbuffer_add(simple_ringbuffer_t *rb, uint8_t *data, size_t len, bo
 
 	if (overwrite && rb->free < len) {
 		size_t needed = len - rb->free;
-		rb->head = simple_ringbuffer_offset(rb, rb->head, needed, 1);
+		rb->head = telnet_ringbuffer_offset(rb, rb->head, needed, 1);
 		rb->free += needed;
 	}
 	if (rb->free < len)
 		return -3;
 
-	size_t new_tail = simple_ringbuffer_offset(rb, rb->tail, len, 1);
+	size_t new_tail = telnet_ringbuffer_offset(rb, rb->tail, len, 1);
 
 	if (new_tail > rb->tail) {
 		memcpy(rb->buf + rb->tail, data, len);
@@ -169,7 +169,7 @@ int simple_ringbuffer_add(simple_ringbuffer_t *rb, uint8_t *data, size_t len, bo
 	return 0;
 }
 
-inline int simple_ringbuffer_read_char(simple_ringbuffer_t *rb)
+inline int telnet_ringbuffer_read_char(telnet_ringbuffer_t *rb)
 {
 	if (!rb)
 		return -1;
@@ -177,13 +177,13 @@ inline int simple_ringbuffer_read_char(simple_ringbuffer_t *rb)
 		return -2;
 
 	int val = rb->buf[rb->head];
-	rb->head = simple_ringbuffer_offset(rb, rb->head, 1, 1);
+	rb->head = telnet_ringbuffer_offset(rb, rb->head, 1, 1);
 	rb->free++;
 
 	return val;
 }
 
-inline int simple_ringbuffer_peek_char(simple_ringbuffer_t *rb, size_t offset)
+inline int telnet_ringbuffer_peek_char(telnet_ringbuffer_t *rb, size_t offset)
 {
 	if (!rb)
 		return -1;
@@ -192,10 +192,10 @@ inline int simple_ringbuffer_peek_char(simple_ringbuffer_t *rb, size_t offset)
 	if (offset >= (rb->size - rb->free))
 		return -3;
 
-	return rb->buf[simple_ringbuffer_offset(rb, rb->head, offset, 1)];
+	return rb->buf[telnet_ringbuffer_offset(rb, rb->head, offset, 1)];
 }
 
-int simple_ringbuffer_read(simple_ringbuffer_t *rb, uint8_t *ptr, size_t size)
+int telnet_ringbuffer_read(telnet_ringbuffer_t *rb, uint8_t *ptr, size_t size)
 {
 	if (!rb || size < 1)
 		return -1;
@@ -204,7 +204,7 @@ int simple_ringbuffer_read(simple_ringbuffer_t *rb, uint8_t *ptr, size_t size)
 	if (used < size)
 		return -2;
 
-	size_t new_head = simple_ringbuffer_offset(rb, rb->head, size, 1);
+	size_t new_head = telnet_ringbuffer_offset(rb, rb->head, size, 1);
 
 	if (ptr) {
 		if (new_head > rb->head) {
@@ -223,7 +223,7 @@ int simple_ringbuffer_read(simple_ringbuffer_t *rb, uint8_t *ptr, size_t size)
 	return 0;
 }
 
-size_t simple_ringbuffer_peek(simple_ringbuffer_t *rb, uint8_t **ptr, size_t size)
+size_t telnet_ringbuffer_peek(telnet_ringbuffer_t *rb, uint8_t **ptr, size_t size)
 {
 	if (!rb || !ptr || size < 1)
 		return 0;

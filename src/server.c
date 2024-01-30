@@ -35,11 +35,47 @@
 #include "pico_telnetd/log.h"
 
 
+/* Telnet commands */
+#define TELNET_SE     240
+#define TELNET_NOP    241
+#define TELNET_DM     242
+#define TELNET_BRK    243
+#define TELNET_IP     244
+#define TELNET_AO     245
+#define TELNET_AYT    246
+#define TELNET_EC     247
+#define TELNET_EL     248
+#define TELNET_GA     249
+#define TELNET_SB     250
+#define TELNET_WILL   251
+#define TELNET_WONT   252
+#define TELNET_DO     253
+#define TELNET_DONT   254
+#define IAC           255
+
+/* Telnet options */
+#define TO_BINARY     0
+#define TO_ECHO       1
+#define TO_RECONNECT  2
+#define TO_SUP_GA     3
+#define TO_AMSN       4
+#define TO_STATUS     5
+#define TO_NAWS       31
+#define TO_TSPEED     32
+#define TO_RFLOWCTRL  33
+#define TO_LINEMODE   34
+#define TO_XDISPLOC   35
+#define TO_ENV        36
+#define TO_AUTH       37
+#define TO_ENCRYPT    38
+#define TO_NEWENV     39
+
+
 #define TELNET_DEFAULT_PORT 23
 #define TCP_SERVER_MAX_CONN 1
 #define TCP_CLIENT_POLL_TIME 1
 
-tcp_server_t *tcpserv = NULL;
+tcp_server_t *stdio_tcpserv = NULL;
 
 static void (*chars_available_callback)(void*) = NULL;
 static void *chars_available_param = NULL;
@@ -59,7 +95,8 @@ static const uint8_t telnet_default_options[] = {
 	IAC, TELNET_WONT, TO_LINEMODE,
 };
 
-static tcp_server_t* tcp_server_init(void) {
+static tcp_server_t* tcp_server_init(size_t rxbuf_size, size_t txbuf_size)
+{
 	tcp_server_t *st = calloc(1, sizeof(tcp_server_t));
 
 	if (!st) {
@@ -67,8 +104,8 @@ static tcp_server_t* tcp_server_init(void) {
 		return NULL;
 	}
 
-	simple_ringbuffer_init(&st->rb_in, st->in_buf, sizeof(st->in_buf));
-	simple_ringbuffer_init(&st->rb_out, st->out_buf, sizeof(st->out_buf));
+	telnet_ringbuffer_init(&st->rb_in, NULL, rxbuf_size);
+	telnet_ringbuffer_init(&st->rb_out, NULL, txbuf_size);
 	st->mode = RAW_MODE;
 	st->cstate = CS_NONE;
 	st->log_cb = telnetd_log_msg;
@@ -210,7 +247,7 @@ static err_t process_received_data(void *arg, uint8_t *buf, size_t len)
 	if (len < 1)
 		return ERR_OK;
 
-	simple_ringbuffer_t *rb = &st->rb_in;
+	telnet_ringbuffer_t *rb = &st->rb_in;
 
 
 	for(int i = 0; i < len; i++) {
@@ -277,7 +314,7 @@ static err_t process_received_data(void *arg, uint8_t *buf, size_t len)
 			tcp_write(st->client, buf, 1, TCP_WRITE_FLAG_COPY);
 			tcp_output(st->client);
 		}
-		if (simple_ringbuffer_add_char(rb, c, false) < 0)
+		if (telnet_ringbuffer_add_char(rb, c, false) < 0)
 			return ERR_MEM;
 	}
 
@@ -289,10 +326,10 @@ static err_t authenticate_connection(tcp_server_t *st)
 {
 	int i;
 	int l = -1;
-	int len = simple_ringbuffer_size(&st->rb_in);
+	int len = telnet_ringbuffer_size(&st->rb_in);
 
 	for (i = 0; i < len; i++) {
-		int c = simple_ringbuffer_peek_char(&st->rb_in, i);
+		int c = telnet_ringbuffer_peek_char(&st->rb_in, i);
 		if (c == 10 || c == 13) {
 			l = i;
 			break;
@@ -304,7 +341,7 @@ static err_t authenticate_connection(tcp_server_t *st)
 	if (st->cstate == CS_AUTH_LOGIN) {
 		if (l >= sizeof(st->login))
 			l = sizeof(st->login) - 1;
-		simple_ringbuffer_read(&st->rb_in, st->login, l+1);
+		telnet_ringbuffer_read(&st->rb_in, st->login, l+1);
 		st->login[l] = 0;
 		st->cstate = CS_AUTH_PASSWD;
 		tcp_write(st->client, telnet_passwd_prompt, strlen(telnet_passwd_prompt), 0);
@@ -312,7 +349,7 @@ static err_t authenticate_connection(tcp_server_t *st)
 	} else if (st->cstate == CS_AUTH_PASSWD) {
 		if (l >= sizeof(st->passwd))
 			l = sizeof(st->passwd) - 1;
-		simple_ringbuffer_read(&st->rb_in, st->passwd, l+1);
+		telnet_ringbuffer_read(&st->rb_in, st->passwd, l+1);
 		st->passwd[l] = 0;
 		if (st->auth_cb(st->auth_cb_param, (const char*)st->login, (const char*)st->passwd) == 0) {
 			st->cstate = CS_CONNECT;
@@ -332,7 +369,7 @@ static err_t authenticate_connection(tcp_server_t *st)
 		memset(st->passwd, 0, sizeof(st->passwd));
 	}
 
-	simple_ringbuffer_flush(&st->rb_in);
+	telnet_ringbuffer_flush(&st->rb_in);
 
 	return ERR_OK;
 }
@@ -373,7 +410,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err
 		buf = buf->next;
 	}
 
-	if ((len = simple_ringbuffer_size(&st->rb_in)) > 0) {
+	if ((len = telnet_ringbuffer_size(&st->rb_in)) > 0) {
 		if (st->cstate == CS_AUTH_LOGIN || st->cstate == CS_AUTH_PASSWD) {
 			authenticate_connection(st);
 		}
@@ -414,8 +451,8 @@ static err_t tcp_server_poll(void *arg, struct tcp_pcb *pcb)
 	}
 
 	if (st->cstate == CS_CONNECT) {
-		while ((waiting = simple_ringbuffer_size(&st->rb_out)) > 0) {
-			size_t len = simple_ringbuffer_peek(&st->rb_out, &rbuf, waiting);
+		while ((waiting = telnet_ringbuffer_size(&st->rb_out)) > 0) {
+			size_t len = telnet_ringbuffer_peek(&st->rb_out, &rbuf, waiting);
 			if (len > 0) {
 				u8_t flags = TCP_WRITE_FLAG_COPY;
 				if (len < waiting)
@@ -423,7 +460,7 @@ static err_t tcp_server_poll(void *arg, struct tcp_pcb *pcb)
 				err = tcp_write(pcb, rbuf, len, flags);
 				if (err != ERR_OK)
 					break;
-				simple_ringbuffer_read(&st->rb_out, NULL, len);
+				telnet_ringbuffer_read(&st->rb_out, NULL, len);
 				wcount++;
 			}
 		}
@@ -475,8 +512,8 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *pcb, err_t err)
 	st->cstate = CS_ACCEPT;
 	st->telnet_state = 0;
 	st->telnet_cmd_count = 0;
-	simple_ringbuffer_flush(&st->rb_in);
-	simple_ringbuffer_flush(&st->rb_out);
+	telnet_ringbuffer_flush(&st->rb_in);
+	telnet_ringbuffer_flush(&st->rb_out);
 
 	if (st->mode == TELNET_MODE) {
 		tcp_write(pcb, telnet_default_options, sizeof(telnet_default_options), 0);
@@ -528,13 +565,13 @@ static bool tcp_server_open(tcp_server_t *st) {
 
 static void stdio_tcp_out_chars(const char *buf, int length)
 {
-	if (!tcpserv)
+	if (!stdio_tcpserv)
 		return;
-	if (tcpserv->cstate != CS_CONNECT)
+	if (stdio_tcpserv->cstate != CS_CONNECT)
 		return;
 
 	for (int i = 0; i <length; i++) {
-		if (simple_ringbuffer_add_char(&tcpserv->rb_out, buf[i], false) < 0)
+		if (telnet_ringbuffer_add_char(&stdio_tcpserv->rb_out, buf[i], false) < 0)
 			return;
 	}
 }
@@ -544,12 +581,12 @@ static int stdio_tcp_in_chars(char *buf, int length)
 	int i = 0;
 	int c;
 
-	if (!tcpserv)
+	if (!stdio_tcpserv)
 		return PICO_ERROR_NO_DATA;
-	if (tcpserv->cstate != CS_CONNECT)
+	if (stdio_tcpserv->cstate != CS_CONNECT)
 		return PICO_ERROR_NO_DATA;
 
-	while (i < length && ((c = simple_ringbuffer_read_char(&tcpserv->rb_in)) >= 0)) {
+	while (i < length && ((c = telnet_ringbuffer_read_char(&stdio_tcpserv->rb_in)) >= 0)) {
 		buf[i++] = c;
 	}
 
@@ -571,8 +608,9 @@ stdio_driver_t stdio_tcp_driver = {
 	.crlf_enabled = PICO_STDIO_DEFAULT_CRLF
 };
 
-static void stdio_tcp_init()
+static void stdio_tcp_init(tcp_server_t *server)
 {
+	stdio_tcpserv = server;
 	chars_available_callback = NULL;
 	chars_available_param = NULL;
 	stdio_set_driver_enabled(&stdio_tcp_driver, true);
@@ -581,25 +619,33 @@ static void stdio_tcp_init()
 
 
 
-tcp_server_t* telnet_server_init()
+tcp_server_t* telnet_server_init(size_t rxbuf_size, size_t txbuf_size)
 {
-	tcpserv = tcp_server_init();
-	return tcpserv;
+	return tcp_server_init(rxbuf_size > 0 ? rxbuf_size : 2048,
+			txbuf_size > 0 ? txbuf_size : 2048);
 }
 
-bool telnet_server_start(bool stdio)
+bool telnet_server_start(tcp_server_t *server, bool stdio)
 {
 	cyw43_arch_lwip_begin();
-	bool res = tcp_server_open(tcpserv);
+	bool res = tcp_server_open(server);
 	if (!res) {
-		tcp_server_close(tcpserv);
+		tcp_server_close(server);
 	} else {
 		if (stdio)
-			stdio_tcp_init();
+			stdio_tcp_init(server);
 	}
 	cyw43_arch_lwip_end();
 
 	return res;
 }
 
+void telnet_server_destroy(tcp_server_t *server)
+{
+	cyw43_arch_lwip_begin();
+	tcp_server_close(server);
+	cyw43_arch_lwip_end();
+	telnet_ringbuffer_free(&server->rb_in);
+	telnet_ringbuffer_free(&server->rb_out);
+}
 
