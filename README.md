@@ -3,7 +3,7 @@ Telnet Server for Raspberry Pi Pico W
 
 ## Features
 
-*pico_telnetd* provides a light-weidht Telnet (or "Raw TCP") server for Pico W.  This is meant to be used with the Pico-SDK.
+*pico_telnetd* provides a light-weight Telnet (or "Raw TCP") server for Pico W.  This is meant to be used with the Pico-SDK.
 
 * Provides _stdio_ driver so a Telnet (or raw TCP) connection can be used as "console" for Pico W.
 * "Interface" library that is easy to include in existing Pico-SDK projects.
@@ -36,12 +36,12 @@ To add "telnet" support to a Pico W project, that allows accessing the unit over
 ...
 <initialize networking>
 ...
-tcp_server_t *telnetserver = telnet_server_init();
+tcp_server_t *telnetserver = telnet_server_init(2048, 8192); // input and output buffer sizes
 if (!telnetserver)
     panic("out of memory);
 
 telnetserver->mode = TELNET_MODE;
-telnet_server_start(true);  // parameter tells whether to enable stdio driver or not... */
+telnet_server_start(telnetserver, true);  // parameter tells whether to enable stdio driver or not... */
 
 ```
 
@@ -62,7 +62,7 @@ user_pwhash_entry_t users[] = {
 };
 
 
-cp_server_t *telnetserver = telnet_server_init();
+cp_server_t *telnetserver = telnet_server_init(2048, 8192);
 if (!telnetserver)
     panic("out of memory);
 
@@ -71,7 +71,7 @@ telnetserver->port = 8000;
 telnetserver->auth_cb = sha512crypt_auth_cb;
 telnetserver->auth_cb_param = (void*)users;
 
-telnet_server_start(true);  // parameter tells whether to enable stdio driver or not... */
+telnet_server_start(telnetserver, true);  // parameter tells whether to enable stdio driver or not... */
 
 ```
 
@@ -93,7 +93,7 @@ int my_auth_cb(void *param, const char *login, const char *password)
 ...
 
 tcpserver->auth_cb = my_auth_cb;
-tcp_server_start(true);
+tcp_server_start(telnetserver, true);
 ...
 ```
 
@@ -121,7 +121,7 @@ void my_logger(int priority, const char *format, ...)
 
 ...
 telnetserver->log_cb = my_logger;
-telnet_server_start(true);
+telnet_server_start(telnetserver, true);
 ...
 ```
 
@@ -134,9 +134,60 @@ To disable logging done by the library completely. Simply set the _log_cb_ to NU
 ...
 telnetserver->log_cb = NULL;
 
-telnet_server_start(true);
+telnet_server_start(telnetserver, true);
 ...
 ```
 
 
+### Usage withouth SDTIO
+
+Telnet server can alternatively be used withouth stdio, by setting stdio parameter to _false_:
+
 ```
+telnet_server_start(telnetserver, false);
+```
+
+#### Reading Data Received from Client
+
+Received data is store in the _rb_in_ ringbuffer. 
+
+Ringbuffer can be read charcter by character using _telnet_ringbuffer_read_char()_ function:
+```
+...
+int in;
+while ((in = telnet_ringbuffer_read_char(&telnetserver->rb_in)) >= 0) {
+  printf("Received byte: %02x (%c)\n", in, isprint(in) ? in : '?');
+}
+...
+```
+
+Alternatively larger blocks can be read from ring buffer using _telnet_ringbuffer_read()_ function:
+```
+size_t bytes_waiting = telnet_ringbuffer_size(&telnetserver->rb_in);
+if (bytes_waiting > 0) {
+  telnet_ringbuffer_read(&telnetserver->rb_in, buffer, bytes_waiting);  // make sure buffer is large enough...
+}
+```
+
+
+#### Sending Data to Client
+
+Data added to ringbuffer _rb_out_, will be transmitted to the client.
+
+Data can be added to ringbuffer either one character at the time using _telnet_ringbuffer_add_char()_ function:
+```
+for (int i = 0; i < strlen(buf); i++) {
+	telnet_ringbuffer_add_char(&telnetserver->rb_out, buf[i], true);  // Last argument controls wheter to overwrite in case ringbuffer fills uup...
+}
+```
+
+Or larger blocks can be sent uainf _telnet_ringbuffer_add()_ function:
+```
+// add data to ringbuffer withouth overwriting data if buffer woud fill up (overwrite parameter set to false)
+int err = telnet_ringbuffer_add(&telnetserver->rb_out, buf, buffer_len, false);
+if (err != 0) {
+   // buffer would fill up 
+}
+```
+
+
