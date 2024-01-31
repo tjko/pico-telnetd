@@ -56,6 +56,7 @@ typedef struct tcp_server_t {
 	int telnet_state;
 	uint8_t telnet_cmd;
 	uint8_t telnet_opt;
+	uint8_t telnet_prev;
 	int telnet_cmd_count;
 	uint8_t login[32 + 1];
 	uint8_t passwd[64 + 1];

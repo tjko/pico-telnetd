@@ -84,6 +84,7 @@ static void *chars_available_param = NULL;
 #define LOG_MSG(...) { if (st->log_cb) st->log_cb(__VA_ARGS__); }
 #endif
 
+static const char *telnet_default_banner = "\r\npico-telnetd\r\n\r\n";
 static const char* telnet_login_prompt = "\r\nlogin: ";
 static const char* telnet_passwd_prompt = "\r\npassword: ";
 static const char* telnet_login_failed = "\r\nLogin failed.\r\n";
@@ -111,6 +112,7 @@ static tcp_server_t* tcp_server_init(size_t rxbuf_size, size_t txbuf_size)
 	st->log_cb = telnetd_log_msg;
 	st->auth_cb = NULL;
 	st->port = TELNET_DEFAULT_PORT;
+	st->banner = telnet_default_banner;
 
 	return st;
 }
@@ -305,6 +307,12 @@ static err_t process_received_data(void *arg, uint8_t *buf, size_t len)
 			else {
 				st->telnet_state = 0;
 			}
+
+			if (st->telnet_prev == 13 && c == 0) { // skip NUL after CR...
+				st->telnet_prev = c;
+				continue;
+			}
+			st->telnet_prev = c;
 		}
 
 		if (st->cstate == CS_AUTH_LOGIN) {
@@ -515,12 +523,8 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *pcb, err_t err)
 	telnet_ringbuffer_flush(&st->rb_in);
 	telnet_ringbuffer_flush(&st->rb_out);
 
-	if (st->mode == TELNET_MODE) {
+	if (st->mode == TELNET_MODE) { /* Send Telnet "handshake"... */
 		tcp_write(pcb, telnet_default_options, sizeof(telnet_default_options), 0);
-		tcp_output(pcb);
-	}
-	else {
-		tcp_write(pcb, "BrickPico\r\n", 11, 0);
 		tcp_output(pcb);
 	}
 
@@ -559,10 +563,6 @@ static bool tcp_server_open(tcp_server_t *st) {
 }
 
 
-
-
-
-
 static void stdio_tcp_out_chars(const char *buf, int length)
 {
 	if (!stdio_tcpserv)
@@ -570,11 +570,14 @@ static void stdio_tcp_out_chars(const char *buf, int length)
 	if (stdio_tcpserv->cstate != CS_CONNECT)
 		return;
 
+	cyw43_arch_lwip_begin();
 	for (int i = 0; i <length; i++) {
 		if (telnet_ringbuffer_add_char(&stdio_tcpserv->rb_out, buf[i], false) < 0)
-			return;
+			break;
 	}
+	cyw43_arch_lwip_end();
 }
+
 
 static int stdio_tcp_in_chars(char *buf, int length)
 {
@@ -586,9 +589,12 @@ static int stdio_tcp_in_chars(char *buf, int length)
 	if (stdio_tcpserv->cstate != CS_CONNECT)
 		return PICO_ERROR_NO_DATA;
 
+	cyw43_arch_lwip_begin();
 	while (i < length && ((c = telnet_ringbuffer_read_char(&stdio_tcpserv->rb_in)) >= 0)) {
+		//printf("'%c' (%02x / %u)\n", isprint(c) ? c : '.', c, c);
 		buf[i++] = c;
 	}
+	cyw43_arch_lwip_end();
 
 	return i ? i : PICO_ERROR_NO_DATA;
 }
@@ -608,6 +614,7 @@ stdio_driver_t stdio_tcp_driver = {
 	.crlf_enabled = PICO_STDIO_DEFAULT_CRLF
 };
 
+
 static void stdio_tcp_init(tcp_server_t *server)
 {
 	stdio_tcpserv = server;
@@ -617,6 +624,15 @@ static void stdio_tcp_init(tcp_server_t *server)
 }
 
 
+static void stdio_tcp_close(tcp_server_t *server)
+{
+	if (!stdio_tcpserv || stdio_tcpserv != server)
+		return;
+	stdio_set_driver_enabled(&stdio_tcp_driver, false);
+	stdio_tcpserv = NULL;
+	chars_available_callback = NULL;
+	chars_available_param = NULL;
+}
 
 
 tcp_server_t* telnet_server_init(size_t rxbuf_size, size_t txbuf_size)
@@ -624,6 +640,7 @@ tcp_server_t* telnet_server_init(size_t rxbuf_size, size_t txbuf_size)
 	return tcp_server_init(rxbuf_size > 0 ? rxbuf_size : 2048,
 			txbuf_size > 0 ? txbuf_size : 2048);
 }
+
 
 bool telnet_server_start(tcp_server_t *server, bool stdio)
 {
@@ -640,9 +657,11 @@ bool telnet_server_start(tcp_server_t *server, bool stdio)
 	return res;
 }
 
+
 void telnet_server_destroy(tcp_server_t *server)
 {
 	cyw43_arch_lwip_begin();
+	stdio_tcp_close(server);
 	tcp_server_close(server);
 	cyw43_arch_lwip_end();
 	telnet_ringbuffer_free(&server->rb_in);
