@@ -1,5 +1,5 @@
 # pico-telnetd
-Telnet Server for Raspberry Pi Pico W
+Experimental Telnet server for Raspberry Pi Pico W
 
 ## Features
 
