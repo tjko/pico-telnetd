@@ -68,6 +68,7 @@ typedef struct tcp_server_t {
 	void (*log_cb)(int priority, const char *format, ...);
 	int (*auth_cb)(void* param, const char *login, const char *password);
 	void *auth_cb_param;
+	bool auto_flush;           /* Control flushing output buffer from tcp "poll" callback */
 } tcp_server_t;
 
 
@@ -75,6 +76,7 @@ typedef struct tcp_server_t {
 tcp_server_t* telnet_server_init(size_t rxbuf_size, size_t tzbuf_set);
 bool telnet_server_start(tcp_server_t *server, bool stdio);
 void telnet_server_destroy(tcp_server_t *server);
+int telnet_server_flush_buffer(tcp_server_t *server);
 
 
 

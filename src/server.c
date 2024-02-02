@@ -96,6 +96,7 @@ static const uint8_t telnet_default_options[] = {
 	IAC, TELNET_WONT, TO_LINEMODE,
 };
 
+
 static tcp_server_t* tcp_server_init(size_t rxbuf_size, size_t txbuf_size)
 {
 	tcp_server_t *st = calloc(1, sizeof(tcp_server_t));
@@ -113,6 +114,7 @@ static tcp_server_t* tcp_server_init(size_t rxbuf_size, size_t txbuf_size)
 	st->auth_cb = NULL;
 	st->port = TELNET_DEFAULT_PORT;
 	st->banner = telnet_default_banner;
+	st->auto_flush = true;
 
 	return st;
 }
@@ -238,6 +240,7 @@ static void process_telnet_cmd(tcp_server_t *st)
 
 	st->telnet_cmd_count++;
 }
+
 
 static err_t process_received_data(void *arg, uint8_t *buf, size_t len)
 {
@@ -382,6 +385,7 @@ static err_t authenticate_connection(tcp_server_t *st)
 	return ERR_OK;
 }
 
+
 static err_t tcp_server_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
 {
 	tcp_server_t *st = (tcp_server_t*)arg;
@@ -434,13 +438,45 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err
 }
 
 
+static int tcp_server_flush_buffer(tcp_server_t *st)
+{
+	uint8_t *rbuf;
+	int waiting;
+	int wcount = 0;
+
+	if (!st)
+		return -1;
+
+	if (st->cstate != CS_CONNECT)
+		return 0;
+
+	while ((waiting = telnet_ringbuffer_size(&st->rb_out)) > 0) {
+		size_t len = telnet_ringbuffer_peek(&st->rb_out, &rbuf, waiting);
+		if (len > 0) {
+			u8_t flags = TCP_WRITE_FLAG_COPY;
+			if (len < waiting)
+				flags |= TCP_WRITE_FLAG_MORE;
+			err_t err = tcp_write(st->client, rbuf, len, flags);
+			if (err != ERR_OK)
+				break;
+			telnet_ringbuffer_read(&st->rb_out, NULL, len);
+			wcount++;
+		} else {
+			break;
+		}
+	}
+
+	if (wcount > 0)
+		tcp_output(st->client);
+
+	return wcount;
+}
+
+
 static err_t tcp_server_poll(void *arg, struct tcp_pcb *pcb)
 {
 	tcp_server_t *st = (tcp_server_t*)arg;
 	int wcount = 0;
-	int waiting;
-	uint8_t *rbuf;
-	err_t err;
 
 
 	if (st->cstate == CS_ACCEPT) {
@@ -456,26 +492,14 @@ static err_t tcp_server_poll(void *arg, struct tcp_pcb *pcb)
 			tcp_write(pcb, telnet_login_prompt, strlen(telnet_login_prompt), 0);
 			wcount++;
 		}
+
+		if (wcount > 0)
+			tcp_output(pcb);
 	}
 
-	if (st->cstate == CS_CONNECT) {
-		while ((waiting = telnet_ringbuffer_size(&st->rb_out)) > 0) {
-			size_t len = telnet_ringbuffer_peek(&st->rb_out, &rbuf, waiting);
-			if (len > 0) {
-				u8_t flags = TCP_WRITE_FLAG_COPY;
-				if (len < waiting)
-					flags |= TCP_WRITE_FLAG_MORE;
-				err = tcp_write(pcb, rbuf, len, flags);
-				if (err != ERR_OK)
-					break;
-				telnet_ringbuffer_read(&st->rb_out, NULL, len);
-				wcount++;
-			}
-		}
+	if (st->auto_flush && st->cstate == CS_CONNECT) {
+		tcp_server_flush_buffer(st);
 	}
-
-	if (wcount > 0)
-		tcp_output(pcb);
 
 	return ERR_OK;
 }
@@ -668,3 +692,12 @@ void telnet_server_destroy(tcp_server_t *server)
 	telnet_ringbuffer_free(&server->rb_out);
 }
 
+
+int telnet_server_flush_buffer(tcp_server_t *st)
+{
+	cyw43_arch_lwip_begin();
+	int res = tcp_server_flush_buffer(st);
+	cyw43_arch_lwip_end();
+
+	return res;
+}
