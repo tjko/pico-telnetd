@@ -589,6 +589,8 @@ static bool tcp_server_open(tcp_server_t *st) {
 
 static void stdio_tcp_out_chars(const char *buf, int length)
 {
+	int count = 0;
+
 	if (!stdio_tcpserv)
 		return;
 	if (stdio_tcpserv->cstate != CS_CONNECT)
@@ -598,7 +600,10 @@ static void stdio_tcp_out_chars(const char *buf, int length)
 	for (int i = 0; i <length; i++) {
 		if (telnet_ringbuffer_add_char(&stdio_tcpserv->rb_out, buf[i], false) < 0)
 			break;
+		count++;
 	}
+	if (count > 0)
+		tcp_server_flush_buffer(stdio_tcpserv);
 	cyw43_arch_lwip_end();
 }
 
