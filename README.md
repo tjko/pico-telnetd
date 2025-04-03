@@ -1,5 +1,5 @@
 # pico-telnetd
-Experimental Telnet server for Raspberry Pi Pico W
+Experimental Telnet server for Raspberry Pi Pico W. This library was created for [FanPico](https://github.com/tjko/fanpico/) project.
 
 ## Features
 
@@ -190,4 +190,6 @@ if (err != 0) {
 }
 ```
 
+## Examples
+See [src/telnetd.c](https://github.com/tjko/fanpico/blob/main/src/telnetd.c) in FanPico project for actual usage example.
 
