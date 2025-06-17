@@ -1,5 +1,5 @@
 /* server.c
-   Copyright (C) 2024 Timo Kokkonen <tjko@iki.fi>
+   Copyright (C) 2024-2025 Timo Kokkonen <tjko@iki.fi>
 
    SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -149,6 +149,7 @@ static err_t tcp_server_close(void *arg) {
 	if (st->client) {
 		err = close_client_connection(st->client);
 		st->client = NULL;
+		st->login[0] = 0;
 	}
 
 	if (st->listen) {
@@ -373,9 +374,10 @@ static err_t authenticate_connection(tcp_server_t *st)
 				strlen(telnet_login_failed), 0);
 			LOG_MSG(LOG_WARNING, "Login failure: %s (%s)",
 				st->login, ip4addr_ntoa(&st->client->remote_ip));
+			st->login_failure_count++;
+			st->login_delay = st->login_failure_count * 2;
 		}
 		tcp_output(st->client);
-		memset(st->login, 0, sizeof(st->login));
 		memset(st->passwd, 0, sizeof(st->passwd));
 	}
 
@@ -398,6 +400,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err
 		close_client_connection(pcb);
 		st->cstate = CS_NONE;
 		st->client = NULL;
+		st->login[0] = 0;
 		return ERR_OK;
 	}
 	if (err != ERR_OK) {
@@ -479,17 +482,33 @@ static err_t tcp_server_poll(void *arg, struct tcp_pcb *pcb)
 
 
 	if (st->cstate == CS_ACCEPT) {
-		if ((st->mode == TELNET_MODE && st->telnet_cmd_count > 0) || st->mode == RAW_MODE) {
-			st->cstate = (st->auth_cb ? CS_AUTH_LOGIN : CS_CONNECT);
-			if (st->banner) {
-				tcp_write(pcb, st->banner, strlen(st->banner), TCP_WRITE_FLAG_COPY);
-				wcount++;
-			}
+		if (st->login_failure_count >= MAX_LOGIN_FAILURES) {
+			LOG_MSG(LOG_NOTICE, "Too many login failures, disconnecting client: %s:%u",
+				ip4addr_ntoa(&pcb->remote_ip), pcb->remote_port);
+			close_client_connection(st->client);
+			st->client = NULL;
+			st->cstate = CS_NONE;
+			st->login[0] = 0;
+			return ERR_OK;
 		}
 
-		if (st->cstate == CS_AUTH_LOGIN) {
-			tcp_write(pcb, telnet_login_prompt, strlen(telnet_login_prompt), 0);
-			wcount++;
+		if (st->login_delay == 0) {
+			if ((st->mode == TELNET_MODE && st->telnet_cmd_count > 0) || st->mode == RAW_MODE) {
+				st->cstate = (st->auth_cb ? CS_AUTH_LOGIN : CS_CONNECT);
+				if (st->banner && !st->banner_displayed) {
+					tcp_write(pcb, st->banner, strlen(st->banner), TCP_WRITE_FLAG_COPY);
+					st->banner_displayed = true;
+					wcount++;
+				}
+			}
+
+			if (st->cstate == CS_AUTH_LOGIN) {
+				tcp_write(pcb, telnet_login_prompt, strlen(telnet_login_prompt), 0);
+				wcount++;
+			}
+
+		} else {
+			st->login_delay--;
 		}
 
 		if (wcount > 0)
@@ -543,6 +562,9 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *pcb, err_t err)
 	st->cstate = CS_ACCEPT;
 	st->telnet_state = 0;
 	st->telnet_cmd_count = 0;
+	st->login_failure_count = 0;
+	st->banner_displayed = false;
+	st->login[0] = 0;
 	telnet_ringbuffer_flush(&st->rb_in);
 	telnet_ringbuffer_flush(&st->rb_out);
 
@@ -643,18 +665,18 @@ stdio_driver_t stdio_tcp_driver = {
 };
 
 
-static void stdio_tcp_init(tcp_server_t *server)
+static void stdio_tcp_init(tcp_server_t *st)
 {
-	stdio_tcpserv = server;
+	stdio_tcpserv = st;
 	chars_available_callback = NULL;
 	chars_available_param = NULL;
 	stdio_set_driver_enabled(&stdio_tcp_driver, true);
 }
 
 
-static void stdio_tcp_close(tcp_server_t *server)
+static void stdio_tcp_close(tcp_server_t *st)
 {
-	if (!stdio_tcpserv || stdio_tcpserv != server)
+	if (!stdio_tcpserv || stdio_tcpserv != st)
 		return;
 	stdio_set_driver_enabled(&stdio_tcp_driver, false);
 	stdio_tcpserv = NULL;
@@ -670,15 +692,15 @@ tcp_server_t* telnet_server_init(size_t rxbuf_size, size_t txbuf_size)
 }
 
 
-bool telnet_server_start(tcp_server_t *server, bool stdio)
+bool telnet_server_start(tcp_server_t *st, bool stdio)
 {
 	cyw43_arch_lwip_begin();
-	bool res = tcp_server_open(server);
+	bool res = tcp_server_open(st);
 	if (!res) {
-		tcp_server_close(server);
+		tcp_server_close(st);
 	} else {
 		if (stdio)
-			stdio_tcp_init(server);
+			stdio_tcp_init(st);
 	}
 	cyw43_arch_lwip_end();
 
@@ -686,22 +708,85 @@ bool telnet_server_start(tcp_server_t *server, bool stdio)
 }
 
 
-void telnet_server_destroy(tcp_server_t *server)
+void telnet_server_destroy(tcp_server_t *st)
 {
 	cyw43_arch_lwip_begin();
-	stdio_tcp_close(server);
-	tcp_server_close(server);
+	stdio_tcp_close(st);
+	tcp_server_close(st);
 	cyw43_arch_lwip_end();
-	telnet_ringbuffer_free(&server->rb_in);
-	telnet_ringbuffer_free(&server->rb_out);
+	telnet_ringbuffer_free(&st->rb_in);
+	telnet_ringbuffer_free(&st->rb_out);
 }
 
 
-int telnet_server_flush_buffer(tcp_server_t *st)
+err_t telnet_server_flush_buffer(tcp_server_t *st)
 {
 	cyw43_arch_lwip_begin();
-	int res = tcp_server_flush_buffer(st);
+	err_t res = tcp_server_flush_buffer(st);
 	cyw43_arch_lwip_end();
 
 	return res;
 }
+
+
+bool telnet_server_client_connected(tcp_server_t *st)
+{
+	return (st->cstate == CS_NONE ? false : true);
+}
+
+
+err_t telnet_server_get_client_ip(const tcp_server_t *st, ip_addr_t *ip, uint16_t *port)
+{
+	if (st->cstate == CS_NONE || !st->client)
+		return ERR_CONN;
+
+	cyw43_arch_lwip_begin();
+	if (ip)
+		ip_addr_set(ip, &st->client->remote_ip);
+	if (port)
+		*port = st->client->remote_port;
+	cyw43_arch_lwip_end();
+
+	return ERR_OK;
+}
+
+
+const char* tcp_connection_state_name(enum tcp_connection_state state)
+{
+	switch (state) {
+	case CS_NONE:
+		return "No Connection";
+	case CS_ACCEPT:
+		return "Accepted";
+	case CS_AUTH_LOGIN:
+	case CS_AUTH_PASSWD:
+		return "Authenticating";
+	case CS_CONNECT:
+		return "Connected";
+	}
+	return "Unknown";
+}
+
+
+err_t telnet_server_disconnect_client(tcp_server_t *st)
+{
+	err_t res = ERR_OK;
+	ip_addr_t ip;
+	uint16_t port;
+
+	if (st->client) {
+		cyw43_arch_lwip_begin();
+		ip_addr_set(&ip, &st->client->remote_ip);
+		port = st->client->remote_port;
+		res = close_client_connection(st->client);
+		st->client = NULL;
+		cyw43_arch_lwip_end();
+		LOG_MSG(LOG_INFO,"Client disconnected: %s:%u", ip4addr_ntoa(&ip), port);
+	}
+	st->cstate = CS_NONE;
+	st->login[0] = 0;
+
+	return res;
+}
+
+/* eof :-)  */

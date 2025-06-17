@@ -1,5 +1,5 @@
 /* pico_telnetd.h
-   Copyright (C) 2024 Timo Kokkonen <tjko@iki.fi>
+   Copyright (C) 2024-2025 Timo Kokkonen <tjko@iki.fi>
 
    SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -23,9 +23,13 @@
 #define TCPSERVER_H 1
 
 #include "pico/stdio.h"
+#include "lwip/tcp.h"
 #include "pico_telnetd/ringbuffer.h"
 
 
+#define MAX_LOGIN_LENGTH 32
+#define MAX_PASSWORD_LENGTH 64
+#define MAX_LOGIN_FAILURES 3
 
 typedef struct user_pwhash_entry {
 	const char *login;
@@ -44,7 +48,6 @@ typedef enum tcp_connection_state {
 	CS_AUTH_LOGIN,
 	CS_AUTH_PASSWD,
 	CS_CONNECT,
-	CS_CLOSE,
 } tcp_connection_state_t;
 
 typedef struct tcp_server_t {
@@ -57,9 +60,12 @@ typedef struct tcp_server_t {
 	uint8_t telnet_cmd;
 	uint8_t telnet_opt;
 	uint8_t telnet_prev;
-	int telnet_cmd_count;
-	uint8_t login[32 + 1];
-	uint8_t passwd[64 + 1];
+	bool banner_displayed;
+	uint32_t telnet_cmd_count;
+	uint16_t login_delay;
+	uint8_t login_failure_count;
+	uint8_t login[MAX_LOGIN_LENGTH + 1];
+	uint8_t passwd[MAX_PASSWORD_LENGTH + 1];
 
 	/* Configuration options... set before calling telnet_server_start() */
 	uint16_t port;             /* Listen port (default is telnet port 23) */
@@ -76,7 +82,11 @@ typedef struct tcp_server_t {
 tcp_server_t* telnet_server_init(size_t rxbuf_size, size_t tzbuf_set);
 bool telnet_server_start(tcp_server_t *server, bool stdio);
 void telnet_server_destroy(tcp_server_t *server);
-int telnet_server_flush_buffer(tcp_server_t *server);
+err_t telnet_server_flush_buffer(tcp_server_t *server);
+bool telnet_server_client_connected(tcp_server_t *server);
+err_t telnet_server_get_client_ip(const tcp_server_t *server, ip_addr_t *ip, uint16_t *port);
+const char* tcp_connection_state_name(enum tcp_connection_state state);
+err_t telnet_server_disconnect_client(tcp_server_t *server);
 
 
 
