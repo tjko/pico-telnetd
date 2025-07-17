@@ -22,6 +22,12 @@
 #ifndef _PICO_TELNETD_LOG_H_
 #define _PICO_TELNETD_LOG_H_
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+
 /* Syslog Priorities */
 
 #define LOG_EMERG     0
@@ -37,6 +43,8 @@ void telnetd_log_level(int priority);
 void telnetd_log_msg(int priority, const char *format, ...);
 
 
-
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _PICO_TELNETD_LOG_H_ */

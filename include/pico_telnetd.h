@@ -19,12 +19,17 @@
    along with pico-telnetd Library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifndef TCPSERVER_H
-#define TCPSERVER_H 1
+#ifndef PICO_TELNETD_H
+#define PICO_TELNETD_H 1
 
 #include "pico/stdio.h"
 #include "lwip/tcp.h"
 #include "pico_telnetd/ringbuffer.h"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
 
 
 #define MAX_LOGIN_LENGTH 32
@@ -89,5 +94,8 @@ const char* tcp_connection_state_name(enum tcp_connection_state state);
 err_t telnet_server_disconnect_client(tcp_server_t *server);
 
 
+#ifdef __cplusplus
+}
+#endif
 
-#endif /* TCPSERVER_H */
+#endif /* PICO_TELNETD_H */

@@ -22,9 +22,18 @@
 #ifndef _PICO_TELNETD_UTIL_H_
 #define _PICO_TELNETD_UTIL_H_
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 char* generate_pwhash_salt(uint8_t len, char *salt);
 char* generate_sha512crypt_pwhash(const char *password);
 int sha512crypt_auth_cb(void *param, const char *login, const char *password);
 
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _PICO_TELNETD_UTIL_H_ */

@@ -25,6 +25,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+
 typedef struct telnet_ringbuffer {
 	uint8_t *buf;
 	bool free_buf;
@@ -45,5 +51,10 @@ int telnet_ringbuffer_read_char(telnet_ringbuffer_t *rb);
 int telnet_ringbuffer_read(telnet_ringbuffer_t *rb, uint8_t *ptr, size_t size);
 size_t telnet_ringbuffer_peek(telnet_ringbuffer_t *rb, uint8_t **ptr, size_t size);
 int telnet_ringbuffer_peek_char(telnet_ringbuffer_t *rb, size_t offset);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* PICO_TELNETD_RINGBUFFER_H */
