@@ -114,6 +114,7 @@ static tcp_server_t* tcp_server_init(size_t rxbuf_size, size_t txbuf_size)
 	st->port = TELNET_DEFAULT_PORT;
 	st->banner = telnet_default_banner;
 	st->auto_flush = true;
+	st->allow_connect_cb = NULL;
 
 	return st;
 }
@@ -544,8 +545,16 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *pcb, err_t err)
 		return ERR_VAL;
 	}
 
-	LOG_MSG(LOG_INFO, "Client connected: %s:%u",
+	LOG_MSG(LOG_NOTICE, "Client connected: %s:%u",
 		ip4addr_ntoa(&pcb->remote_ip), pcb->remote_port);
+
+	if (st->allow_connect_cb) {
+		if (st->allow_connect_cb(&pcb->remote_ip) <= 0) {
+			LOG_MSG(LOG_ERR, "tcp_server_accept: connection not allowed from: %s",
+				ip4addr_ntoa(&pcb->remote_ip));
+			return ERR_MEM;
+		}
+	}
 
 	if (st->cstate != CS_NONE) {
 		LOG_MSG(LOG_ERR, "tcp_server_accept: reject connection");
@@ -781,7 +790,7 @@ err_t telnet_server_disconnect_client(tcp_server_t *st)
 		res = close_client_connection(st->client);
 		st->client = NULL;
 		cyw43_arch_lwip_end();
-		LOG_MSG(LOG_INFO,"Client disconnected: %s:%u", ip4addr_ntoa(&ip), port);
+		LOG_MSG(LOG_NOTICE,"Client disconnected: %s:%u", ip4addr_ntoa(&ip), port);
 	}
 	st->cstate = CS_NONE;
 	st->login[0] = 0;

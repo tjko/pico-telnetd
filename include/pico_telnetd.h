@@ -80,6 +80,8 @@ typedef struct tcp_server_t {
 	int (*auth_cb)(void* param, const char *login, const char *password);
 	void *auth_cb_param;
 	bool auto_flush;           /* Control flushing output buffer from tcp "poll" callback */
+	/* Call back to determine if incoming connection should be allowed */
+	int (*allow_connect_cb)(ip_addr_t *src_ip);
 } tcp_server_t;
 
 
