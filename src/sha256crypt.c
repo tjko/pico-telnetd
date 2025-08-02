@@ -1,6 +1,8 @@
 /* SHA256-based Unix crypt implementation.
    Released into the Public Domain by Ulrich Drepper <drepper@redhat.com>.  */
 
+#ifndef PICOTELNETD_EXTERNAL_SHA256CRYPT
+
 //#include <endian.h>
 #include <errno.h>
 #include <limits.h>
@@ -719,3 +721,4 @@ main (void)
 }
 #endif
 
+#endif /* PICOTELNETD_EXTERNAL_SHA256CRYPT */

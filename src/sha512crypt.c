@@ -1,6 +1,8 @@
 /* SHA512-based Unix crypt implementation.
    Released into the Public Domain by Ulrich Drepper <drepper@redhat.com>.  */
 
+#ifndef PICOTELNETD_EXTERNAL_SHA512CRYPT
+
 //#include <endian.h>
 #include <errno.h>
 #include <limits.h>
@@ -787,3 +789,5 @@ main (void)
   return result;
 }
 #endif
+
+#endif /* PICOTELNETD_EXTERNAL_SHA512CRYPT */
